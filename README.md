@@ -29,7 +29,7 @@ Expected collection = fuel sales + lube and shop sales, minus credit sales, minu
 ## Tank stock and dip readings
 
 1. Owner or manager: **Tanks** tab, then **Tanks setup**. Add each tank with its capacity and, optionally, its dip chart (one line per reading, as `dip, litres`). Then, in **Duty**, edit each nozzle and link it to its tank.
-2. **Fuel delivery** records a tanker: bill amount, bill number, and litres per tank (up to 3 tanks). The bill is added to the oil company account in Suppliers automatically.
+2. **Fuel delivery** records a tanker: bill number, and for each tank (up to 3) the litres and the bill amount for that fuel. The total is added to the oil company account in Suppliers automatically. The per-fuel amounts give the cost per litre used in the margin report.
 3. **Add dip reading** (managers) or the **Tank dip** tab (workers) records a dip, either as litres or as a dip converted through the tank's chart.
 4. Each new dip is checked against the previous one: opening dip + deliveries in between, minus fuel sold on that tank's nozzles (from submitted duties), equals the expected stock. The difference is shown in red when it is more than 0.5% of the fuel sold (and at least 5 L).
 
@@ -85,6 +85,44 @@ In the **Duty** tab, tap **Shortage report**. Pick the period, how many shortage
 - **Trend by week or month:** with a column for each worker.
 
 A duty counts as short when the money handed in is ₹1 or more below what was expected. Excel and PDF buttons are on this report too.
+
+## Book, bank deposits and profit margin
+
+- **Duty money in the Book:** when the manager closes a business day, the money handed in by the workers appears in the **Book**. Cash goes to the Cash account, UPI to UPI / wallet, and card and other payment modes to Bank. Money a worker spent from the till is already deducted from what they hand in.
+- **Bank deposits:** in the Book, tap **Bank deposit** (date, amount, slip number, deposited by). It moves cash from Cash to Bank. The Book shows **Cash waiting to be banked**, the oldest unbanked day, and a table of recent days with cash handed in, banked and still to bank. Deposits are matched to the oldest days first.
+- **Reports tab:** the profit and loss now includes fuel sales and lube and shop sales from closed days, and duty expenses are included in expenses by category. If you also invoice a lube sale that was entered in a duty, it is counted twice, so invoice only sales that are not in a duty.
+- **Profit and margin:** the Reports tab also shows fuel margin per fuel (sales less the cost of the litres sold, from your delivery bills), shop and invoice margin (from each item's purchase price), and a net profit before worker pay. Cost per litre is the average of the deliveries in the period, or the latest earlier delivery. A fuel with no delivery cost shows "no cost" and is left out of the profit.
+
+The business date (the 6 AM to 6 AM day) comes from the server, so every phone agrees on the day.
+
+## Fuel products and density checks
+
+**Fuel products (Pump setup, Fuel products):** the owner can add, rename or switch off the fuels sold, for example XP95 or CNG. Each has a unit: litre, kg (for example CNG) or kWh (for example EV charging). Renaming a fuel updates your nozzles, tanks and rates. Duty forms, the day report and the daily WhatsApp summary show the right unit, and liquid-fuel litres are totalled separately from kg and kWh. Tanks, dip readings and the tank stock check apply to liquid fuels only.
+
+**Density checks:** both a **fuel delivery** (for each tank) and a **dip reading** (managers on the Tanks tab, workers on the Tank dip tab) can record:
+- the density stated on the supplier's invoice (deliveries only),
+- the density you measured with the hydrometer,
+- the temperature, and
+- the density corrected to 15 °C.
+
+The Tanks tab lists recent readings and flags a reading when it is **outside the allowed range** for that fuel, or when it **differs from the invoice density by more than the tolerance**. The reading at 15 °C is used when it is entered, otherwise the measured one. Set the lowest, highest and tolerance for each fuel under Pump setup, Fuel products. The defaults shown there (for example 0.720 to 0.775 for petrol, 0.820 to 0.860 for diesel, tolerance 0.003) are common figures and are only a starting point: confirm them with your oil company's guidelines.
+
+## Shop products: categories, GST and Excel import
+
+- **Categories:** in the **Stock** tab, tap **Categories** to add or remove them, or type a new one when you add an item. The list is grouped by category and can be filtered.
+- **GST and HSN per product:** every product has a GST rate (0, 5, 12, 18 or 28 per cent) and an optional HSN code. On an invoice, picking a stock item fills in its GST rate and HSN, and each line can be changed. Items that are not in stock can be given any of the rates. The invoice shows HSN and GST per line and the CGST and SGST (or IGST) for each rate. The Reports tab shows a **GST by rate** table.
+- **Import from Excel:** in the Stock tab, tap **Import from Excel**. Download the template if you like. Your file (.xlsx or .csv) needs a heading row with at least **Name** and **Selling price**; other columns are Category, Unit, Purchase price, Opening stock, Low stock level, GST % and HSN. You see a preview of every row before anything is saved: new products can be added or skipped, products already in stock can be updated or skipped (you choose for each, or for all at once), and rows with a problem are shown with the reason. Updating an existing product changes only the columns that have a value in your file, and never its stock quantity. Categories in the file are created automatically.
+
+The HSN codes in the template are examples only. Use the codes that apply to your products.
+
+## Marathi and Hindi for workers
+
+Workers see a language picker (English, Marathi, Hindi) at the top of their screens. Their choice is saved with their login, so it is the same next time and on any phone. The worker screens are translated: Duty (including the details of past duties), Credit sale, Tank dip, My pay, and the messages and confirmations on them.
+
+- Names you enter yourself stay as you typed them: customers, fuels, expense categories, items and nozzles.
+- Owner and manager screens are in English.
+- The login screen is in English.
+- The translations are in one place in `public/index.html` (the `I18N` list near the top of the script), so any wording can be changed there. Please have someone who reads Marathi and Hindi check the wording, in particular the pay and shortage terms.
 
 ## Try it on your computer
 

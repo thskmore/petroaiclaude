@@ -25,6 +25,8 @@ create table if not exists credit_sales(
 if (!db.prepare("pragma table_info(credit_sales)").all().some((c) => c.name === "status"))
   db.exec("alter table credit_sales add column status text not null default 'ok'");
 
+addColLang();
+function addColLang() { if (!db.prepare("pragma table_info(users)").all().some((c) => c.name === "lang")) db.exec("alter table users add column lang text not null default 'en'"); }
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
@@ -59,7 +61,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86400;
 const hs = (t) => crypto.createHash("sha256").update(t).digest("hex");
 const mob = (x) => String(x || "").replace(/\D/g, "").slice(-10);
-const pub = (u) => ({ id: u.id, name: u.name, mobile: u.mobile, role: u.role });
+const pub = (u) => ({ id: u.id, name: u.name, mobile: u.mobile, role: u.role, lang: u.lang || "en" });
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: TZ });
 const usersCount = () => db.prepare("select count(*) n from users").get().n;
 
@@ -70,7 +72,7 @@ function cookie(q, k) {
 function getUser(q) {
   const t = cookie(q, "sid");
   if (!t) return null;
-  const r = db.prepare("select u.id,u.name,u.mobile,u.role,u.active,s.exp from sessions s join users u on u.id=s.user_id where s.token=?").get(hs(t));
+  const r = db.prepare("select u.id,u.name,u.mobile,u.role,u.lang,u.active,s.exp from sessions s join users u on u.id=s.user_id where s.token=?").get(hs(t));
   return r && r.active && r.exp >= now() ? r : null;
 }
 const need = (...roles) => (q, s, n) => {
@@ -99,7 +101,7 @@ const addFail = (k) => { const f = fails.get(k) || { n: 0, t: 0 }; f.n = Date.no
 
 app.get("/api/me", (q, s) => {
   const u = getUser(q);
-  s.json({ user: u ? pub(u) : null, setup: usersCount() === 0 });
+  s.json({ user: u ? pub(u) : null, setup: usersCount() === 0, biz: bizDate() });
 });
 app.post("/api/setup", (q, s) => {
   if (usersCount() > 0) return s.status(403).json({ error: "Setup is already done." });
@@ -124,6 +126,12 @@ app.post("/api/logout", (q, s) => {
   const t = cookie(q, "sid");
   if (t) db.prepare("delete from sessions where token=?").run(hs(t));
   s.setHeader("Set-Cookie", "sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+  s.json({ ok: true });
+});
+app.post("/api/lang", need(), (q, s) => {
+  const lang = q.body && q.body.lang;
+  if (!["en", "mr", "hi"].includes(lang)) return s.status(400).json({ error: "Unknown language." });
+  db.prepare("update users set lang=? where id=?").run(lang, q.user.id);
   s.json({ ok: true });
 });
 app.post("/api/password", need(), (q, s) => {
@@ -176,9 +184,9 @@ db.exec(`
 create table if not exists sections(name text primary key, ver integer not null, json text not null);
 create table if not exists audit(id integer primary key, t integer not null, user_id integer, user_name text, action text not null, detail text);
 `);
-const SECTIONS = { c: ["c"], inv: ["inv"], items: ["items"], sup: ["sup"], bk: ["bk", "ob"], biz: ["biz"], tanks: ["tanks", "deliv"], setup: ["nozzles", "rates", "expcats", "paymodes"] };
-const ARRAY_KEYS = new Set(["c", "inv", "items", "sup", "bk", "tanks", "deliv", "nozzles", "rates", "expcats", "paymodes"]);
-const LABEL = { c: "Customers", inv: "Invoices", items: "Stock items", sup: "Suppliers", bk: "Book entries", ob: "Opening balances", biz: "Business details", tanks: "Tanks", deliv: "Fuel deliveries", nozzles: "Nozzles", rates: "Fuel rates", expcats: "Expense categories", paymodes: "Payment modes" };
+const SECTIONS = { c: ["c"], inv: ["inv"], items: ["items", "itemcats"], sup: ["sup"], bk: ["bk", "ob"], biz: ["biz"], tanks: ["tanks", "deliv"], setup: ["nozzles", "rates", "expcats", "paymodes", "fuelprods"] };
+const ARRAY_KEYS = new Set(["c", "inv", "items", "sup", "bk", "tanks", "deliv", "nozzles", "rates", "expcats", "paymodes", "fuelprods", "itemcats"]);
+const LABEL = { c: "Customers", inv: "Invoices", items: "Stock items", sup: "Suppliers", bk: "Book entries", ob: "Opening balances", biz: "Business details", tanks: "Tanks", deliv: "Fuel deliveries", nozzles: "Nozzles", rates: "Fuel rates", expcats: "Expense categories", paymodes: "Payment modes", fuelprods: "Fuel products", itemcats: "Product categories" };
 function audit(u, action, detail) {
   try { db.prepare("insert into audit(t,user_id,user_name,action,detail) values(?,?,?,?,?)").run(now(), u ? u.id : null, u ? u.name : "", action, String(detail || "").slice(0, 600)); } catch (e) { /* never block the request */ }
 }
@@ -288,7 +296,7 @@ const AUD = {
   "PUT /api/payroll/rates": (q) => `Changed pay rates for worker #${q.body.worker_id}`,
   "POST /api/payroll/items": (q) => `Pay entry (${q.body.kind}) ${money(q.body.amount)} for worker #${q.body.worker_id}`,
   "DELETE /api/payroll/items/:id": (q) => `Deleted pay entry #${q.params.id}`,
-  "POST /api/dips": (q) => `Tank dip reading for tank #${q.body.tank_id}`,
+  "POST /api/dips": (q) => `Tank dip reading for tank #${q.body.tank_id}` + (q.body.d15 || q.body.dens_obs ? " with density" : ""),
   "DELETE /api/dips/:id": (q) => `Deleted dip reading #${q.params.id}`,
 };
 // ---- Credit customers and worker credit sales
@@ -301,7 +309,7 @@ function customers() {
     return { id: c.id, name: c.name, active: c.active !== false, veh: c.veh || [], available: Math.round(((c.limit || 0) - due) * 100) / 100 };
   });
 }
-app.get("/api/fuels", need(), (q, s) => s.json([...new Set((stateNow().nozzles || []).filter((n) => n.active !== false).map((n) => n.fuel))]));
+app.get("/api/fuels", need(), (q, s) => { const st = stateNow(); s.json([...new Set((st.nozzles || []).filter((n) => n.active !== false).map((n) => n.fuel))].map((name) => ({ name, unit: unitOf(st, name) }))); });
 app.get("/api/customers", need(), (q, s) => s.json(customers().filter((c) => c.active)));
 app.post("/api/credit-sales", need(), (q, s) => {
   const { cust_id, n, a, veh, force, fuel, litres } = q.body || {};
@@ -384,6 +392,7 @@ function rateFor(st, fuel, date) {
   });
   return best ? +best.rate : null;
 }
+const unitOf = (st, fuel) => { const p = (st.fuelprods || []).find((x) => x.name === fuel); return (p && p.unit) || "L"; };
 function lastClose(nid) {
   return db.prepare("select dl.closing c from duty_lines dl join duties d on d.id=dl.duty_id where dl.nozzle_id=? and d.status in ('submitted','closed') and dl.closing is not null order by d.submitted desc, dl.id desc limit 1").get(String(nid)) || {};
 }
@@ -392,11 +401,11 @@ function detail(d) {
   const st = stateNow(), nm = nozzleMap(st);
   const lines = db.prepare("select * from duty_lines where duty_id=? order by id").all(d.id).map((l) => {
     const lt = l.closing == null ? 0 : r2(l.closing - l.opening - l.testing), n = nm[l.nozzle_id] || {};
-    return { ...l, nozzle: n.name || "Nozzle", fuel: n.fuel || "", litres: lt, amount: r2(lt * (l.rate || 0)) };
+    return { ...l, nozzle: n.name || "Nozzle", fuel: n.fuel || "", unit: unitOf(st, n.fuel), litres: lt, amount: r2(lt * (l.rate || 0)) };
   });
   const items = db.prepare("select * from duty_items where duty_id=? order by id").all(d.id).map((i) => ({ ...i, amount: r2(i.qty * i.price) }));
   const expenses = db.prepare("select * from duty_expenses where duty_id=? order by id").all(d.id);
-  const sales = r2(lines.reduce((a, l) => a + l.amount, 0)), litres = r2(lines.reduce((a, l) => a + l.litres, 0));
+  const sales = r2(lines.reduce((a, l) => a + l.amount, 0)), litres = r2(lines.filter((l) => l.unit === "L").reduce((a, l) => a + l.litres, 0));
   const lube = r2(items.reduce((a, i) => a + i.amount, 0)), exp = r2(expenses.reduce((a, e) => a + e.amount, 0));
   const credit = r2(db.prepare("select coalesce(sum(a),0) t from credit_sales where worker_id=? and status='ok' and created>=? and created<=?").get(d.worker_id, d.started, d.submitted || now()).t);
   const pay = d.pay_json ? JSON.parse(d.pay_json) : { cash: d.cash, upi: d.upi, card: d.card };
@@ -656,6 +665,25 @@ app.get("/api/day-report", need("owner", "manager"), (q, s) => {
   s.json({ d, day: dd, modes: allModes(st).map((m) => ({ key: m.key, name: m.name })), duties, summary: { ...T, total: r2(T.sales + T.lube), fuel, shop, exps, pay } });
 });
 
+// Money from closed business days: collections by mode, fuel and shop sales, expenses (for the Book and Reports)
+app.get("/api/duty-money", need("owner", "manager"), (q, s) => {
+  const f = validDay(q.query.from) ? q.query.from : "0000-01-01", t = validDay(q.query.to) ? q.query.to : "9999-12-31";
+  const days = db.prepare("select d from days where status in ('closed','approved') and d>=? and d<=? order by d").all(f, t);
+  s.json(days.map(({ d }) => {
+    const ds = db.prepare("select * from duties where d=? and status='closed' order by id").all(d).map(detail);
+    const pay = {}, fuel = {}, lube = {}, exp = [];
+    let fuelTotal = 0, lubeTotal = 0, credit = 0;
+    ds.forEach((x) => {
+      Object.keys(x.pay).forEach((k) => (pay[k] = r2((pay[k] || 0) + (+x.pay[k] || 0))));
+      x.lines.forEach((l) => { const k = l.fuel || "Other", o = fuel[k] || (fuel[k] = { litres: 0, amount: 0 }); o.litres = r2(o.litres + l.litres); o.amount = r2(o.amount + l.amount); });
+      x.items.forEach((i) => { const o = lube[i.item_id] || (lube[i.item_id] = { item_id: i.item_id, name: i.name, qty: 0, amount: 0 }); o.qty = r2(o.qty + i.qty); o.amount = r2(o.amount + i.amount); });
+      x.expenses.forEach((e) => exp.push({ cat: e.cat, note: e.note, amount: e.amount, worker: x.worker }));
+      fuelTotal += x.sales; lubeTotal += x.lube; credit += x.credit;
+    });
+    return { d, pay, fuel, lube: Object.values(lube), exp, fuelTotal: r2(fuelTotal), lubeTotal: r2(lubeTotal), credit: r2(credit), duties: ds.length };
+  }));
+});
+
 // Closed duties with their sales and cash difference, for the shortage report
 app.get("/api/shortage-data", need("owner", "manager"), (q, s) => {
   const f = validDay(q.query.from) ? q.query.from : "0000-01-01", t = validDay(q.query.to) ? q.query.to : "9999-12-31";
@@ -669,6 +697,9 @@ create table if not exists dips(
   id integer primary key, tank_id text not null, litres real not null, dip real,
   note text, user_id integer not null, t integer not null);
 `);
+addCol("dips", "dens_obs", "real");
+addCol("dips", "temp", "real");
+addCol("dips", "d15", "real");
 function fromChart(chart, dip) {
   const c = (chart || []).map((x) => ({ cm: +x.cm, l: +x.l })).filter((x) => Number.isFinite(x.cm) && Number.isFinite(x.l)).sort((a, b) => a.cm - b.cm);
   if (c.length < 2) return { err: "This tank has no dip chart yet. Enter litres directly, or ask the manager to add the chart." };
@@ -699,7 +730,7 @@ function tankChecks() {
 app.get("/api/tanks", need(), (q, s) => {
   const st = stateNow(), names = {};
   (st.tanks || []).forEach((t) => (names[String(t.id)] = t.name));
-  const mine = db.prepare("select id,tank_id,litres,dip,note,t from dips where user_id=? order by id desc limit 10").all(q.user.id).map((d) => ({ ...d, tank: names[d.tank_id] || "Tank" }));
+  const mine = db.prepare("select id,tank_id,litres,dip,dens_obs,temp,d15,note,t from dips where user_id=? order by id desc limit 10").all(q.user.id).map((d) => ({ ...d, tank: names[d.tank_id] || "Tank" }));
   s.json({ tanks: (st.tanks || []).map((t) => ({ id: t.id, name: t.name, fuel: t.fuel, capacity: t.capacity || 0 })), mine });
 });
 app.post("/api/dips", need(), (q, s) => {
@@ -714,8 +745,43 @@ app.post("/api/dips", need(), (q, s) => {
     litres = r.l;
   }
   if (tank.capacity && litres > tank.capacity * 1.02) return s.status(400).json({ error: `That is more than the tank capacity (${tank.capacity} L). Check the reading.` });
-  const id = db.prepare("insert into dips(tank_id,litres,dip,note,user_id,t) values(?,?,?,?,?,?)").run(String(tank.id), r2(litres), dip, String(b.note || "").slice(0, 200), q.user.id, now()).lastInsertRowid;
+  const opt = (x, lo, hi) => (x === "" || x == null ? null : (Number.isFinite(+x) && +x >= lo && +x <= hi ? +x : NaN));
+  const dobs = opt(b.dens_obs, 0.5, 1.2), d15 = opt(b.d15, 0.5, 1.2), tmp = opt(b.temp, -10, 90);
+  if ([dobs, d15].some(Number.isNaN)) return s.status(400).json({ error: "Density should be a number such as 0.745." });
+  if (Number.isNaN(tmp)) return s.status(400).json({ error: "Check the temperature." });
+  const id = db.prepare("insert into dips(tank_id,litres,dip,dens_obs,temp,d15,note,user_id,t) values(?,?,?,?,?,?,?,?,?)").run(String(tank.id), r2(litres), dip, dobs, tmp, d15, String(b.note || "").slice(0, 200), q.user.id, now()).lastInsertRowid;
   s.json({ id, litres: r2(litres) });
+});
+// ---- Density checks (deliveries and dips) with flags
+const DENS_DEF = { "Petrol (MS)": { min: 0.72, max: 0.775 }, "Diesel (HSD)": { min: 0.82, max: 0.86 }, "Power petrol": { min: 0.72, max: 0.775 }, "Power diesel": { min: 0.82, max: 0.86 } };
+function densCfg(st, fuel) {
+  const p = (st.fuelprods || []).find((x) => x.name === fuel), d = DENS_DEF[fuel] || {}, pick = (x, def) => (x === undefined || x === null || x === "" ? def : +x);
+  return { min: pick(p && p.dmin, d.min), max: pick(p && p.dmax, d.max), tol: pick(p && p.dtol, 0.003), unit: (p && p.unit) || "L" };
+}
+function densFlags(cfg, r) {
+  const v = r.d15 ?? r.obs, f = [];
+  if (v == null || cfg.unit !== "L") return f;
+  if ((cfg.min != null && v < cfg.min) || (cfg.max != null && v > cfg.max)) f.push(`Outside the allowed range (${cfg.min} to ${cfg.max})`);
+  if (r.inv != null && Math.abs(v - r.inv) > cfg.tol + 1e-9) f.push(`Differs from the invoice density by ${(Math.abs(v - r.inv)).toFixed(4)} (limit ${cfg.tol})`);
+  return f;
+}
+app.get("/api/density", need("owner", "manager"), (q, s) => {
+  const st = stateNow(), tanks = {}, rows = [], nn = (x) => (x === "" || x == null || !Number.isFinite(+x) ? null : +x);
+  (st.tanks || []).forEach((t) => (tanks[String(t.id)] = t));
+  (st.deliv || []).forEach((d) => (d.lines || []).forEach((l) => {
+    const dn = l.dens, t = tanks[String(l.tank_id)];
+    if (!dn || !t) return;
+    const o = { src: "Delivery", t: Math.floor((d.ts || 0) / 1000), d: d.d, tank: t.name, fuel: t.fuel, inv: nn(dn.inv), obs: nn(dn.obs), temp: nn(dn.temp), d15: nn(dn.d15), by: "" };
+    if (o.inv == null && o.obs == null && o.d15 == null) return;
+    o.flags = densFlags(densCfg(st, t.fuel), o); rows.push(o);
+  }));
+  db.prepare("select di.*, u.name by_name from dips di join users u on u.id=di.user_id where di.dens_obs is not null or di.d15 is not null order by di.t desc limit 200").all().forEach((x) => {
+    const t = tanks[x.tank_id]; if (!t) return;
+    const o = { src: "Dip", t: x.t, d: new Date(x.t * 1000).toLocaleDateString("en-CA", { timeZone: TZ }), tank: t.name, fuel: t.fuel, inv: null, obs: x.dens_obs, temp: x.temp, d15: x.d15, by: x.by_name };
+    o.flags = densFlags(densCfg(st, t.fuel), o); rows.push(o);
+  });
+  rows.sort((a, b) => b.t - a.t);
+  s.json(rows.slice(0, 80));
 });
 app.get("/api/stock-check", need("owner", "manager"), (q, s) => s.json(tankChecks()));
 app.delete("/api/dips/:id", need("owner", "manager"), (q, s) => {
@@ -805,7 +871,7 @@ app.get("/api/daily-summary", need("owner", "manager"), (q, s) => {
   let lit = 0, amt = 0, cash = 0, upi = 0, card = 0, diff = 0;
   ds.forEach((x) => {
     cash += x.cash; upi += x.upi; card += x.card; diff += x.diff;
-    x.lines.forEach((l) => { const f = fuel[l.fuel || "Other"] || (fuel[l.fuel || "Other"] = { l: 0, a: 0 }); f.l += l.litres; f.a += l.amount; lit += l.litres; amt += l.amount; });
+    x.lines.forEach((l) => { const f = fuel[l.fuel || "Other"] || (fuel[l.fuel || "Other"] = { l: 0, a: 0, u: l.unit }); f.l += l.litres; f.a += l.amount; if (l.unit === "L") lit += l.litres; amt += l.amount; });
   });
   const when = new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   const out = [`*Daily summary: ${when}*`];
@@ -813,8 +879,8 @@ app.get("/api/daily-summary", need("owner", "manager"), (q, s) => {
   out.push("", "*Fuel sold*");
   if (!ds.length) out.push("No duties submitted for this date.");
   else {
-    Object.keys(fuel).forEach((k) => out.push(`${k}: ${L1(fuel[k].l)} = ${R0(fuel[k].a)}`));
-    out.push(`Total: ${L1(lit)} = ${R0(amt)}`);
+    Object.keys(fuel).forEach((k) => out.push(`${k}: ${fuel[k].u === "L" ? L1(fuel[k].l) : (Math.round(fuel[k].l * 10) / 10).toLocaleString("en-IN") + " " + fuel[k].u} = ${R0(fuel[k].a)}`));
+    out.push(`Total: ${lit ? L1(lit) + " of liquid fuel, " : ""}${R0(amt)} fuel sales`);
     const lb = ds.reduce((a, x) => a + x.lube, 0);
     if (lb > 0) out.push(`Lube and shop sales: ${R0(lb)}`);
     const pt = {}, mn = {};
